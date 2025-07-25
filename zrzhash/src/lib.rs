@@ -1,6 +1,7 @@
 use sha3::{Digest, Sha3_256};
 use blake3::Hasher as Blake3;
 
+#[derive(Clone)] // HE AÑADIDO ESTA LÍNEA
 pub struct ZRZHasher;
 
 impl ZRZHasher {

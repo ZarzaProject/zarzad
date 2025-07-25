@@ -8,7 +8,12 @@ use zarza_consensus::block::Block;
 use zarza_consensus::blockchain::Blockchain;
 use zrzhash::ZRZHasher;
 use config::Config;
-use std::time::Instant; // Importamos solo Instant, que es el que usamos.
+use std::time::Instant;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
+use zarza_consensus::transaction::Transaction;
 
 mod cli;
 
@@ -19,7 +24,7 @@ struct BlockchainState {
 }
 
 struct Miner {
-    blockchain: Blockchain,
+    blockchain: Mutex<Blockchain>,
     address: String,
     hasher: ZRZHasher,
     node_url: String,
@@ -30,9 +35,9 @@ struct Miner {
 }
 
 impl Miner {
-    fn new(blockchain: Blockchain, address: String, _threads: usize, node_url: String) -> Self {
+    fn new(blockchain: Blockchain, address: String, node_url: String) -> Self {
         Miner {
-            blockchain,
+            blockchain: Mutex::new(blockchain),
             address,
             hasher: ZRZHasher::new(),
             node_url,
@@ -43,51 +48,108 @@ impl Miner {
         }
     }
 
-    fn mine_block(&mut self) -> Result<Block, Box<dyn Error>> {
-        let last_block = self.blockchain.chain.last().ok_or("Blockchain vacía")?;
-        let block_height = last_block.index + 1;
-        
-        info!("⛏️  Comenzando a minar bloque #{} con dificultad {:.2}", block_height, self.blockchain.difficulty);
-        
-        let mut block = Block::new(
-            block_height,
-            Utc::now().timestamp(),
-            last_block.hash.clone(),
-            self.blockchain.current_transactions.clone(),
-            self.blockchain.difficulty,
-        );
-
-        let target = Block::calculate_target(self.blockchain.difficulty);
-        let mut nonce = 0u64;
-        let block_start_time = Instant::now();
-
+    fn start_mining(&mut self, threads: usize) -> Result<(), Box<dyn Error + Send + Sync>> {
+        info!("Minero iniciado para la dirección: {}", self.address);
         loop {
-            nonce += 1;
-            let hash_result = self.hasher.hash(&block.to_bytes(), nonce);
+            let (last_block, difficulty, reward, mempool_txs) = {
+                let bc_lock = self.blockchain.lock().unwrap();
+                (
+                    bc_lock.chain.last().unwrap().clone(),
+                    bc_lock.difficulty,
+                    bc_lock.reward,
+                    bc_lock.current_transactions.clone(),
+                )
+            };
+            
+            let block_height = last_block.index + 1;
+            info!("⛏️  Comenzando a minar bloque #{} con dificultad {:.2}", block_height, difficulty);
+            
+            let coinbase_tx = Transaction::new_coinbase(&self.address, reward);
+            let mut block_transactions = vec![coinbase_tx];
+            block_transactions.extend(mempool_txs);
 
-            if hash_result.iter().zip(target.iter()).all(|(h, t)| h <= t) {
-                block.nonce = nonce;
-                block.hash = hex::encode(hash_result);
-                
-                let duration = block_start_time.elapsed();
-                // Evitamos división por cero si el bloque se encuentra instantáneamente
+            let mut block = Block::new(
+                block_height,
+                Utc::now().timestamp(),
+                last_block.hash.clone(),
+                block_transactions,
+                difficulty,
+            );
+            
+            let target = Block::calculate_target(difficulty);
+            let found_block_nonce = Arc::new(Mutex::new(None));
+            let mining_stopped = Arc::new(AtomicBool::new(false));
+            
+            let mut handles = vec![];
+            for i in 0..threads {
+                let block_clone = block.clone();
+                let target_clone = target;
+                let found_block_nonce_clone = found_block_nonce.clone();
+                let mining_stopped_clone = mining_stopped.clone();
+                let hasher_clone = self.hasher.clone();
+
+                handles.push(thread::spawn(move || {
+                    let mut nonce = i as u64;
+                    loop {
+                        if mining_stopped_clone.load(Ordering::Relaxed) {
+                            return None;
+                        }
+
+                        let hash_result = hasher_clone.hash(&block_clone.to_bytes(), nonce);
+                        if hash_result.iter().zip(target_clone.iter()).all(|(h, t)| h <= t) {
+                            let mut found = found_block_nonce_clone.lock().unwrap();
+                            *found = Some(nonce);
+                            mining_stopped_clone.store(true, Ordering::Relaxed);
+                            return Some(nonce);
+                        }
+                        nonce += threads as u64;
+                    }
+                }));
+            }
+
+            let mut found_nonce: Option<u64> = None;
+            for handle in handles {
+                if let Some(nonce) = handle.join().unwrap() {
+                    found_nonce = Some(nonce);
+                }
+            }
+
+            if let Some(nonce) = found_nonce {
+                let duration = Instant::now().elapsed();
                 let secs = duration.as_secs_f64().max(1e-9);
                 let hashrate = nonce as f64 / secs;
                 
                 self.total_hashes += nonce as u128;
                 
                 info!("🎉 ¡Bloque encontrado! Nonce: {}, Hashrate: {:.2} H/s", nonce, hashrate);
-                break;
-            }
-            
-            if nonce % 2_000_000 == 0 {
-                let duration = block_start_time.elapsed();
-                let secs = duration.as_secs_f64().max(1e-9);
-                let hashrate = nonce as f64 / secs;
-                info!("   Progreso... Nonce: {}, Hashrate: {:.2} H/s", nonce, hashrate);
+                
+                block.nonce = nonce;
+                let hash_result = self.hasher.hash(&block.to_bytes(), nonce);
+                block.hash = hex::encode(hash_result);
+
+                info!("   Enviando bloque #{} al nodo...", block.index);
+                match self.submit_block(&block) {
+                    Ok(_) => {
+                        self.blocks_submitted += 1;
+                        let total_secs = self.start_time.elapsed().as_secs_f64().max(1.0);
+                        let avg_hashrate = self.total_hashes as f64 / total_secs;
+
+                        println!("======================================================");
+                        info!("✅ Bloque Aceptado!");
+                        info!("   Block Height: {}", block.index);
+                        info!("   Bloques enviados (sesión): {}", self.blocks_submitted);
+                        info!("   Hashrate promedio: {:.2} H/s", avg_hashrate);
+                        println!("======================================================");
+
+                        self.blockchain.lock().unwrap().add_block(block)?;
+                    }
+                    Err(e) => {
+                        warn!("❌ Fallo al enviar el bloque: {}", e);
+                        warn!("   Puede que la red haya encontrado un bloque antes. Resincronizando...");
+                    }
+                }
             }
         }
-        Ok(block)
     }
 
     fn submit_block(&self, block: &Block) -> Result<(), Box<dyn Error>> {
@@ -100,38 +162,9 @@ impl Miner {
         }
         Ok(())
     }
-
-    fn start(&mut self) -> Result<(), Box<dyn Error>> {
-        info!("Minero iniciado para la dirección: {}", self.address);
-        loop {
-            let block = self.mine_block()?;
-            info!("   Enviando bloque #{} al nodo...", block.index);
-            match self.submit_block(&block) {
-                Ok(_) => {
-                    self.blocks_submitted += 1;
-                    let total_secs = self.start_time.elapsed().as_secs_f64().max(1.0);
-                    let avg_hashrate = self.total_hashes as f64 / total_secs;
-
-                    println!("======================================================");
-                    info!("✅ Bloque Aceptado!");
-                    info!("   Block Height: {}", block.index);
-                    info!("    Recompensa: {} ZRZ", self.blockchain.reward);
-                    info!("   Bloques enviados (sesión): {}", self.blocks_submitted);
-                    info!("   Hashrate promedio: {:.2} H/s", avg_hashrate);
-                    println!("======================================================");
-
-                    self.blockchain.add_block(block)?;
-                }
-                Err(e) => {
-                    warn!("❌ Fallo al enviar el bloque: {}", e);
-                    warn!("   Puede que la red haya encontrado un bloque antes. Resincronizando...");
-                }
-            }
-        }
-    }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     pretty_env_logger::init();
     let args = cli::CliArgs::parse();
 
@@ -163,9 +196,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut miner = Miner::new(
         blockchain,
         args.address,
-        args.threads,
         args.node,
     );
     
-    miner.start()
+    miner.start_mining(args.threads)
 }

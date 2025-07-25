@@ -1,11 +1,11 @@
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
 use std::error::Error;
-use config::Config;
 use hex;
 use thiserror::Error;
 use crate::transaction::{Transaction, TxInput, TxOutput};
 use std::collections::HashMap;
+use sha2::{Sha256, Digest};
 
 #[derive(Error, Debug)]
 pub enum WalletError {
@@ -30,6 +30,7 @@ impl Wallet {
         let key_pair = Ed25519KeyPair::from_pkcs8(&pkcs8_bytes)
             .map_err(|_| WalletError::KeyRejected)?;
         
+        // MEJORA: Generar una dirección más larga y segura a partir del hash de la clave pública.
         let address = Self::generate_address(key_pair.public_key().as_ref());
         
         Ok(Wallet { key_pair, pkcs8_bytes, address })
@@ -42,20 +43,26 @@ impl Wallet {
         let key_pair = Ed25519KeyPair::from_pkcs8(&pkcs8_bytes)
             .map_err(|_| WalletError::InvalidPrivateKey)?;
             
+        // MEJORA: Generar una dirección más larga y segura.
         let address = Self::generate_address(key_pair.public_key().as_ref());
         
         Ok(Wallet { key_pair, pkcs8_bytes, address })
     }
 
+    // MEJORA: La función `create_transaction` ahora tiene en cuenta las tarifas.
     pub fn create_transaction(
         &self,
         recipient: String,
         amount: f64,
+        fee: f64, // MEJORA: Añadimos un parámetro para la tarifa de la transacción.
         utxos: HashMap<String, TxOutput>,
     ) -> Result<Transaction, WalletError> {
         let mut balance = 0.0;
         let mut inputs_to_use = Vec::new();
         
+        // El total a cubrir es la cantidad + la tarifa.
+        let total_needed = amount + fee;
+
         for (utxo_key, utxo) in utxos {
             if utxo.address == self.address {
                 balance += utxo.amount;
@@ -65,17 +72,19 @@ impl Wallet {
                     output_index: key_parts[1].parse().unwrap(),
                     signature: String::new(),
                 });
-                if balance >= amount { break; }
+                // MEJORA: Rompemos el bucle cuando se cubren los fondos necesarios.
+                if balance >= total_needed { break; }
             }
         }
 
-        if balance < amount { return Err(WalletError::InsufficientFunds); }
+        if balance < total_needed { return Err(WalletError::InsufficientFunds); }
 
         let mut outputs = vec![TxOutput { address: recipient, amount }];
-        if balance > amount {
+        // Si hay cambio, se devuelve el resto a la dirección del remitente.
+        if balance > total_needed {
             outputs.push(TxOutput {
                 address: self.address.clone(),
-                amount: balance - amount,
+                amount: balance - total_needed,
             });
         }
 
@@ -93,12 +102,15 @@ impl Wallet {
         }
     }
     
-    // --- FUNCIÓN CORREGIDA Y EN SU SITIO ---
+    // MEJORA: La dirección se crea a partir del hash SHA256 de la clave pública,
+    // garantizando una longitud y seguridad adecuadas.
     fn generate_address(public_key: &[u8]) -> String {
-        format!("ZRZ{}", hex::encode(&public_key[..16]))
+        let mut hasher = Sha256::new();
+        hasher.update(public_key);
+        let result = hasher.finalize();
+        format!("ZRZ{}", hex::encode(result))
     }
 
-    // --- FUNCIÓN CORREGIDA (sin 'static') ---
     pub fn verify_signature(public_key_bytes: &[u8], message: &[u8], signature_bytes: &[u8]) -> bool {
         let public_key = UnparsedPublicKey::new(&ED25519, public_key_bytes);
         public_key.verify(message, signature_bytes).is_ok()

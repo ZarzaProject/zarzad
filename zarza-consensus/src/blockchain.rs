@@ -5,6 +5,7 @@ use crate::{block::Block, transaction::{Transaction, TxOutput}};
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
 use log;
+use std::error::Error;
 
 #[derive(Error, Debug)]
 pub enum BlockchainError {
@@ -30,7 +31,7 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
-    pub fn new(settings: &config::Config) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(settings: &config::Config) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let mut blockchain = Blockchain {
             chain: Vec::new(),
             current_transactions: Vec::new(),
@@ -60,12 +61,12 @@ impl Blockchain {
             self.chain.push(genesis_block);
         }
     }
-
+    
     pub fn add_block(&mut self, block: Block) -> Result<(), BlockchainError> {
-        self.process_transactions(&block.transactions)?;
         if !self.is_valid_block(&block) {
             return Err(BlockchainError::InvalidBlock);
         }
+        self.process_transactions(&block.transactions)?;
         self.chain.push(block);
         self.adjust_reward();
         self.adjust_difficulty();
@@ -74,6 +75,7 @@ impl Blockchain {
     }
 
     fn process_transactions(&mut self, transactions: &[Transaction]) -> Result<(), BlockchainError> {
+        let mut total_fees = 0.0;
         for tx in transactions {
             if !tx.verify_signature() {
                 return Err(BlockchainError::TransactionError(format!("Firma inválida en la transacción {}", tx.id)));
@@ -84,12 +86,17 @@ impl Blockchain {
             }
             let input_sum = self.verify_inputs(tx)?;
             let output_sum: f64 = tx.outputs.iter().map(|o| o.amount).sum();
+            
             if input_sum < output_sum {
                 return Err(BlockchainError::TransactionError(format!("Fondos insuficientes en la transacción {}", tx.id)));
             }
+
+            total_fees += input_sum - output_sum;
+            
             self.consume_inputs_as_utxos(tx);
             self.update_utxos_with_new_outputs(tx);
         }
+        self.reward += total_fees;
         Ok(())
     }
 
@@ -122,7 +129,6 @@ impl Blockchain {
         self.utxos.values().filter(|utxo| utxo.address == address).map(|utxo| utxo.amount).sum()
     }
     
-    // --- FUNCIÓN DE AJUSTE DE DIFICULTAD MEJORADA ---
     fn adjust_difficulty(&mut self) {
         let last_block = match self.chain.last() {
             Some(block) => block,
@@ -135,26 +141,31 @@ impl Blockchain {
                 Some(block) => block,
                 None => return,
             };
+            
+            let mut timestamps: Vec<i64> = self.chain[period_start_index..=last_block.index as usize]
+                .iter()
+                .map(|b| b.timestamp)
+                .collect();
+            timestamps.sort_unstable();
 
-            let time_taken_for_period = last_block.timestamp - period_start_block.timestamp;
+            let median_time_past = if timestamps.len() % 2 == 0 {
+                let mid = timestamps.len() / 2;
+                (timestamps[mid - 1] + timestamps[mid]) / 2
+            } else {
+                timestamps[timestamps.len() / 2]
+            };
+
+            let time_taken_for_period = median_time_past - period_start_block.timestamp;
             let expected_time_for_period = (self.difficulty_adjust_blocks * self.block_time) as i64;
             
             if time_taken_for_period <= 0 { return; }
 
-            // --- NUEVA FÓRMULA (MEDIA MÓVIL EXPONENCIAL) ---
-            // 'alpha' es un factor de suavizado. Un valor más bajo significa ajustes más suaves.
             let alpha = 2.0 / (self.difficulty_adjust_blocks as f64 + 1.0);
-
-            // Calculamos el ajuste objetivo basado en el rendimiento del último período.
             let target_adjustment = self.difficulty * (expected_time_for_period as f64 / time_taken_for_period as f64);
-            
-            // La nueva dificultad es una mezcla ponderada entre la dificultad antigua y el ajuste objetivo.
-            // Esto "suaviza" la reacción para evitar saltos bruscos.
             let new_difficulty = self.difficulty * (1.0 - alpha) + target_adjustment * alpha;
 
-            // Mantenemos los límites para evitar que la dificultad se dispare o caiga demasiado en un solo ajuste.
-            let max_difficulty = self.difficulty * 2.0; // Máximo: duplicar la dificultad
-            let min_difficulty = self.difficulty / 2.0; // Mínimo: la mitad de la dificultad
+            let max_difficulty = self.difficulty * 2.0;
+            let min_difficulty = self.difficulty / 2.0;
 
             self.difficulty = new_difficulty.clamp(min_difficulty, max_difficulty);
             
@@ -192,13 +203,26 @@ impl Blockchain {
     
     pub fn mine_block(&mut self, miner_address: &str) -> Result<Block, BlockchainError> {
         let last_block = self.chain.last().ok_or(BlockchainError::EmptyChain)?;
-        let coinbase_tx = Transaction::new_coinbase(miner_address, self.reward);
-        self.current_transactions = vec![coinbase_tx];
+        
+        let mut block_transactions: Vec<Transaction> = self.current_transactions.drain(..).collect();
+        let mut total_fees = 0.0;
+        
+        for tx in &block_transactions {
+            let input_sum = self.verify_inputs(tx)?;
+            let output_sum: f64 = tx.outputs.iter().map(|o| o.amount).sum();
+            if input_sum > output_sum {
+                total_fees += input_sum - output_sum;
+            }
+        }
+        
+        let coinbase_tx = Transaction::new_coinbase(miner_address, self.reward + total_fees);
+        block_transactions.insert(0, coinbase_tx);
+        
         let mut block = Block::new(
             last_block.index + 1,
             Utc::now().timestamp(),
             last_block.hash.clone(),
-            self.current_transactions.clone(),
+            block_transactions,
             self.difficulty,
         );
         let hasher = ZRZHasher::new();
@@ -232,5 +256,35 @@ impl Blockchain {
         }
         self.current_transactions.push(tx);
         Ok(())
+    }
+    
+    pub fn resolve_conflicts(&mut self, new_chain: Vec<Block>) -> bool {
+        if new_chain.len() > self.chain.len() {
+            log::info!("Conflicto resuelto: la cadena local de {} bloques es reemplazada por una más larga de {} bloques.", self.chain.len(), new_chain.len());
+            self.chain = new_chain;
+            self.rebuild_utxos();
+            true
+        } else {
+            log::info!("No se reemplaza la cadena local. La nueva cadena no es más larga.");
+            false
+        }
+    }
+    
+    fn rebuild_utxos(&mut self) {
+        self.utxos.clear();
+        for block in &self.chain {
+            for tx in &block.transactions {
+                if !tx.is_coinbase() {
+                    for input in &tx.inputs {
+                        let utxo_key = format!("{}:{}", input.tx_id, input.output_index);
+                        self.utxos.remove(&utxo_key);
+                    }
+                }
+                for (index, output) in tx.outputs.iter().enumerate() {
+                    let utxo_key = format!("{}:{}", tx.id, index);
+                    self.utxos.insert(utxo_key, output.clone());
+                }
+            }
+        }
     }
 }

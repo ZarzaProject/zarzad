@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use zarza_consensus::{block::Block, transaction::Transaction};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum NetworkMessage {
     Ping,
     Pong,

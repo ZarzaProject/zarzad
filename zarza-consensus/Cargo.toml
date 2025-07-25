@@ -16,3 +16,4 @@ ring = "0.16"
 config = "0.13"
 log = "0.4" # <--- ¡AÑADE ESTA LÍNEA!
 blake3 = "1.0" # <--- ¡AÑADE ESTA LÍNEA!
+sha2 = "0.10" # <--- ¡HE AÑADIDO ESTA LÍNEA!

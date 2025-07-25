@@ -13,7 +13,6 @@ pub struct Block {
 }
 
 impl Block {
-    // La firma de la función ahora acepta `difficulty` como f64.
     pub fn new(
         index: u64,
         timestamp: i64,
@@ -32,15 +31,14 @@ impl Block {
         }
     }
 
-    // La lógica se ha ajustado para manejar un `f64`.
+    // MEJORA: Simplificación en el cálculo del target.
+    // Aunque se mantiene el f64 para la compatibilidad, se ajusta la lógica para ser más clara.
     pub fn calculate_target(difficulty: f64) -> [u8; 32] {
         let mut target = [0xff; 32];
         if difficulty <= 0.0 { return target; }
 
-        // Usamos la parte entera para los bits de cero.
-        let difficulty_bits = difficulty.floor() as u64;
-        let leading_zeros = (difficulty_bits / 8) as usize;
-        let remainder = difficulty_bits % 8;
+        let leading_zeros = (difficulty.floor() as u64 / 8) as usize;
+        let remainder = difficulty.floor() as u64 % 8;
 
         for i in 0..leading_zeros {
             if i < 32 {

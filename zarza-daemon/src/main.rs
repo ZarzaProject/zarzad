@@ -11,14 +11,16 @@ use zarza_consensus::block::Block;
 use std::fs;
 use std::path::Path;
 use std::collections::HashMap;
+use tokio::task;
+use zarza_network::messages::NetworkMessage;
 
 #[derive(serde::Serialize)]
 struct BlockchainState {
     last_block: Block,
-    difficulty: f64, // Aseguramos que sea f64
+    difficulty: f64,
 }
 
-fn save_blockchain(blockchain: &Blockchain) -> Result<(), Box<dyn Error>> {
+fn save_blockchain(blockchain: &Blockchain) -> Result<(), Box<dyn Error + Send + Sync>> {
     let path_str = "data/chain.json";
     info!("Guardando la blockchain en {}...", path_str);
     if let Some(parent) = Path::new(path_str).parent() {
@@ -30,7 +32,7 @@ fn save_blockchain(blockchain: &Blockchain) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn load_blockchain(settings: &Config) -> Result<Blockchain, Box<dyn Error>> {
+fn load_blockchain(settings: &Config) -> Result<Blockchain, Box<dyn Error + Send + Sync>> {
     let path_str = "data/chain.json";
     if Path::new(path_str).exists() {
         info!("Encontrada blockchain existente. Cargando desde {}...", path_str);
@@ -47,7 +49,7 @@ fn load_blockchain(settings: &Config) -> Result<Blockchain, Box<dyn Error>> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     pretty_env_logger::init();
     info!("Iniciando Zarza Daemon v{}", env!("CARGO_PKG_VERSION"));
     
@@ -57,10 +59,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
     let mempool = Arc::new(Mutex::new(Vec::<Transaction>::new()));
 
-    let mut p2p_node = P2PNode::new(&settings).await?;
-    let p2p_handle = tokio::spawn(async move {
-        if let Err(e) = p2p_node.start().await { warn!("Error en el nodo P2P: {}", e); }
-    });
+    let p2p_node = Arc::new(P2PNode::new(&settings, blockchain.clone(), mempool.clone()).await?);
+    let p2p_handle = task::spawn(p2p_node.clone().start());
+
+    let p2p_broadcast_tx = p2p_node.get_broadcast_sender();
 
     let blockchain_rpc = blockchain.clone();
     let mempool_rpc = mempool.clone();
@@ -68,6 +70,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let rpc_route = warp::path("rpc").and(warp::post()).and(warp::body::json()).and_then(move |body: serde_json::Value| {
         let blockchain_rpc_clone = blockchain_rpc.clone();
         let mempool_rpc_clone = mempool_rpc.clone();
+        let p2p_tx_clone = p2p_broadcast_tx.clone();
 
         async move {
             let method_name = body["method"].as_str().unwrap_or("unknown");
@@ -92,11 +95,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         };
                         
                         let mut bc_lock = blockchain_rpc_clone.lock().unwrap();
-                        match bc_lock.add_block(block) {
+                        match bc_lock.add_block(block.clone()) {
                             Ok(_) => {
                                 info!("[RPC] Bloque aceptado.");
-                                mempool_rpc_clone.lock().unwrap().clear();
                                 
+                                let mut mempool_lock = mempool_rpc_clone.lock().unwrap();
+                                let included_tx_ids: Vec<String> = block.transactions.iter().map(|tx| tx.id.clone()).collect();
+                                mempool_lock.retain(|tx| !included_tx_ids.contains(&tx.id));
+
+                                if let Err(e) = p2p_tx_clone.send(NetworkMessage::NewBlock(block.clone())) {
+                                    warn!("Error al difundir el nuevo bloque: {}", e);
+                                }
+
                                 let bc_to_save = bc_lock.clone();
                                 tokio::spawn(async move {
                                     if let Err(e) = save_blockchain(&bc_to_save) {
@@ -124,19 +134,38 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "send_raw_transaction" => {
                         let tx: Transaction = match serde_json::from_value(body["params"][0].clone()) {
                             Ok(t) => t,
-                            Err(e) => return Ok(warp::reply::json(&json!({"jsonrpc": "2.0", "error": {"code": -32700, "message": format!("Error de parseo de tx: {}", e)}, "id": body["id"]}))),
+                            Err(e) => return Ok(warp::reply::json(&json!({"jsonrpc": "2.0", "error": {"code": -32700, "message": format!("Parse error: {}", e)}, "id": body["id"]}))),
                         };
                         info!("Recibida nueva transacción {} para el mempool", tx.id);
-                        mempool_rpc_clone.lock().unwrap().push(tx);
+                        mempool_rpc_clone.lock().unwrap().push(tx.clone());
+
+                        if let Err(e) = p2p_tx_clone.send(NetworkMessage::NewTransaction(tx)) {
+                            warn!("Error al difundir la nueva transacción: {}", e);
+                        }
+
                         Ok(warp::reply::json(&json!({"jsonrpc": "2.0", "result": "transaction received", "id": body["id"]})))
                     },
+                    "replace_chain" => {
+                        let new_chain: Vec<Block> = match serde_json::from_value(body["params"][0].clone()) {
+                            Ok(c) => c,
+                            Err(e) => return Ok(warp::reply::json(&json!({"jsonrpc": "2.0", "error": {"code": -32700, "message": format!("Parse error: {}", e)}, "id": body["id"]}))),
+                        };
+                        
+                        let mut bc_lock = blockchain_rpc_clone.lock().unwrap();
+                        if bc_lock.resolve_conflicts(new_chain) {
+                            info!("[RPC] Cadena reemplazada con éxito.");
+                            Ok(warp::reply::json(&json!({"jsonrpc": "2.0", "result": "chain replaced", "id": body["id"]})))
+                        } else {
+                            info!("[RPC] Cadena no reemplazada, la local es la más larga.");
+                            Ok(warp::reply::json(&json!({"jsonrpc": "2.0", "result": "chain not replaced", "id": body["id"]})))
+                        }
+                    }
                     _ => Ok(warp::reply::json(&json!({"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not found"}, "id": body["id"]})))
                 }
             } else {
                 Ok(warp::reply::json(&json!({"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": null})))
             };
             
-            // Esto es necesario para que el tipo de retorno coincida con lo que espera `and_then`
             reply.map_err(|e: warp::Rejection| e)
         }
     });
