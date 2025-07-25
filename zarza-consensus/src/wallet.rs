@@ -19,6 +19,7 @@ pub struct Wallet {
     key_pair: Ed25519KeyPair,
     pkcs8_bytes: Vec<u8>,
     address: String,
+    pub_key_hex: String, // ¡NUEVO! Almacenar la clave pública en hexadecimal
 }
 
 impl Wallet {
@@ -30,10 +31,11 @@ impl Wallet {
         let key_pair = Ed25519KeyPair::from_pkcs8(&pkcs8_bytes)
             .map_err(|_| WalletError::KeyRejected)?;
         
-        // MEJORA: Generar una dirección más larga y segura a partir del hash de la clave pública.
-        let address = Self::generate_address(key_pair.public_key().as_ref());
-        
-        Ok(Wallet { key_pair, pkcs8_bytes, address })
+        let public_key_bytes = key_pair.public_key().as_ref();
+        let address = Self::generate_address(public_key_bytes);
+        let pub_key_hex = hex::encode(public_key_bytes); // Convertir a hexadecimal
+
+        Ok(Wallet { key_pair, pkcs8_bytes, address, pub_key_hex })
     }
 
     pub fn from_private_key(private_key: &str) -> Result<Self, Box<dyn Error>> {
@@ -43,10 +45,11 @@ impl Wallet {
         let key_pair = Ed25519KeyPair::from_pkcs8(&pkcs8_bytes)
             .map_err(|_| WalletError::InvalidPrivateKey)?;
             
-        // MEJORA: Generar una dirección más larga y segura.
-        let address = Self::generate_address(key_pair.public_key().as_ref());
+        let public_key_bytes = key_pair.public_key().as_ref();
+        let address = Self::generate_address(public_key_bytes);
+        let pub_key_hex = hex::encode(public_key_bytes); // Convertir a hexadecimal
         
-        Ok(Wallet { key_pair, pkcs8_bytes, address })
+        Ok(Wallet { key_pair, pkcs8_bytes, address, pub_key_hex })
     }
 
     // MEJORA: La función `create_transaction` ahora tiene en cuenta las tarifas.
@@ -71,6 +74,7 @@ impl Wallet {
                     tx_id: key_parts[0].to_string(),
                     output_index: key_parts[1].parse().unwrap(),
                     signature: String::new(),
+                    pub_key: self.pub_key_hex.clone(), // ¡NUEVO! Incluimos la clave pública
                 });
                 // MEJORA: Rompemos el bucle cuando se cubren los fondos necesarios.
                 if balance >= total_needed { break; }
@@ -99,6 +103,7 @@ impl Wallet {
         for input in &mut tx.inputs {
             let signature = self.key_pair.sign(&data_to_sign);
             input.signature = hex::encode(signature.as_ref());
+            // No necesitamos asignar input.pub_key aquí, ya se hizo en create_transaction
         }
     }
     
@@ -119,4 +124,6 @@ impl Wallet {
     pub fn get_address(&self) -> &str { &self.address }
 
     pub fn export_private_key(&self) -> String { hex::encode(&self.pkcs8_bytes) }
+
+    pub fn get_public_key_hex(&self) -> &str { &self.pub_key_hex } // ¡NUEVO!
 }

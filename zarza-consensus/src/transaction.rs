@@ -7,6 +7,7 @@ pub struct TxInput {
     pub tx_id: String,      // ID de la transacción anterior
     pub output_index: u32,  // Índice de la salida en esa transacción
     pub signature: String,  // Firma que desbloquea esta UTXO
+    pub pub_key: String,    // ¡NUEVO! Clave pública del firmante en formato hexadecimal
 }
 
 // Representa una nueva salida que se crea en una transacción. Esta es una futura UTXO.
@@ -68,6 +69,7 @@ impl Transaction {
             bytes.extend(input.tx_id.as_bytes());
             bytes.extend(&input.output_index.to_le_bytes());
             bytes.extend(input.signature.as_bytes());
+            bytes.extend(input.pub_key.as_bytes()); // ¡NUEVO! Incluir la clave pública
         }
         bytes
     }
@@ -84,13 +86,35 @@ impl Transaction {
         self.inputs.is_empty()
     }
 
-    // Lógica de verificación de firma (aún simplificada, pero preparada).
+    // Lógica de verificación de firma
     pub fn verify_signature(&self) -> bool {
-        // En una implementación real, aquí se verificaría cada firma de cada entrada
-        // usando la clave pública correspondiente.
         if self.is_coinbase() {
             return true;
         }
-        !self.inputs.iter().any(|input| input.signature.is_empty())
+
+        let data_to_verify = self.to_bytes_for_signing();
+        for input in &self.inputs {
+            let public_key_bytes = match hex::decode(&input.pub_key) {
+                Ok(bytes) => bytes,
+                Err(_) => {
+                    log::warn!("Firma inválida: clave pública no es un hexadecimal válido para input {}:{}", input.tx_id, input.output_index);
+                    return false; // La clave pública no es un hexadecimal válido
+                }
+            };
+            let signature_bytes = match hex::decode(&input.signature) {
+                Ok(bytes) => bytes,
+                Err(_) => {
+                    log::warn!("Firma inválida: firma no es un hexadecimal válido para input {}:{}", input.tx_id, input.output_index);
+                    return false; // La firma no es un hexadecimal válido
+                }
+            };
+
+            // Usamos la función de verificación del módulo `wallet`
+            if !crate::wallet::Wallet::verify_signature(&public_key_bytes, &data_to_verify, &signature_bytes) {
+                log::warn!("Firma inválida para input {}:{}", input.tx_id, input.output_index);
+                return false;
+            }
+        }
+        true
     }
 }

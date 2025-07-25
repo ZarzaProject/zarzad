@@ -4,17 +4,18 @@ symbol = "ZRZ"
 version = "0.1.0"
 port = 18444
 rpc_port = 18445
+seed_peers = ["192.168.1.132:18444"]
 
 [consensus]
 initial_block_reward = 8.43
 reward_reduction_rate = 0.0000010
 min_block_reward = 0.21
-block_time = 3
+block_time = 2
 max_supply = 21000000
-initial_difficulty = 15
+initial_difficulty = 10
 difficulty_adjust_blocks = 2
 
 [mining]
-threads = 4
+threads = 8
 intensity = 5
 report_interval = 15

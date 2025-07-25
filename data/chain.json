@@ -2,7 +2,7 @@
   "chain": [
     {
       "index": 0,
-      "timestamp": 1753405952,
+      "timestamp": 1753430105,
       "transactions": [],
       "previous_hash": "0",
       "hash": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -41,131 +41,14 @@
         255,
         255
       ]
-    },
-    {
-      "index": 1,
-      "timestamp": 1753405954,
-      "transactions": [
-        {
-          "id": "77e5ddcf4aa2ccdf5cc4b1aa10f7359e0be65dcb3d5d10c76b1b723d2c49e764",
-          "inputs": [],
-          "outputs": [
-            {
-              "address": "ZRZddb96bfd4523f436797438b85d7ea8f4",
-              "amount": 8.43
-            }
-          ],
-          "timestamp": 1753405954
-        }
-      ],
-      "previous_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-      "hash": "0001db0b9baae90097ab23e7065cc5dfc77d63bbf18eb86a7ecdc26b246652c2",
-      "nonce": 2018,
-      "target": [
-        0,
-        1,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255
-      ]
-    },
-    {
-      "index": 2,
-      "timestamp": 1753405954,
-      "transactions": [
-        {
-          "id": "2f37cb03a7d982961733dc96cad60b356e4818fa6ad03a5cfc2f96950ad5348a",
-          "inputs": [],
-          "outputs": [
-            {
-              "address": "ZRZddb96bfd4523f436797438b85d7ea8f4",
-              "amount": 8.4299999157
-            }
-          ],
-          "timestamp": 1753405954
-        }
-      ],
-      "previous_hash": "0001db0b9baae90097ab23e7065cc5dfc77d63bbf18eb86a7ecdc26b246652c2",
-      "hash": "000135b71a58e209027d481a6582c6be3ec453c30c843c11a6f717ae52169b8f",
-      "nonce": 65324,
-      "target": [
-        0,
-        1,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255,
-        255
-      ]
     }
   ],
   "current_transactions": [],
-  "utxos": {
-    "77e5ddcf4aa2ccdf5cc4b1aa10f7359e0be65dcb3d5d10c76b1b723d2c49e764:0": {
-      "address": "ZRZddb96bfd4523f436797438b85d7ea8f4",
-      "amount": 8.43
-    },
-    "2f37cb03a7d982961733dc96cad60b356e4818fa6ad03a5cfc2f96950ad5348a:0": {
-      "address": "ZRZddb96bfd4523f436797438b85d7ea8f4",
-      "amount": 8.4299999157
-    }
-  },
-  "difficulty": 30.0,
-  "reward": 8.4299998314,
+  "utxos": {},
+  "difficulty": 10.0,
+  "reward": 8.43,
   "min_reward": 0.21,
   "reduction_rate": 1e-6,
-  "block_time": 3,
+  "block_time": 2,
   "difficulty_adjust_blocks": 2
 }
