@@ -1,0 +1,15 @@
+[package]
+name = "zarza-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+serde_json = "1.0"
+config = "0.13"
+log = "0.4"
+pretty_env_logger = "0.4"
+zarza-consensus = { path = "../zarza-consensus" }
+zarza-network = { path = "../zarza-network" }
+warp = "0.3"
+serde = { version = "1.0", features = ["derive"] } # <--- ¡AÑADE ESTA LÍNEA!

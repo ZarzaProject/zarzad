@@ -1,0 +1,20 @@
+[network]
+name = "Zarza"
+symbol = "ZRZ"
+version = "0.1.0"
+port = 18444
+rpc_port = 18445
+
+[consensus]
+initial_block_reward = 8.43
+reward_reduction_rate = 0.0000010
+min_block_reward = 0.21
+block_time = 150
+max_supply = 21000000
+initial_difficulty = 1
+difficulty_adjust_blocks = 1
+
+[mining]
+threads = 4
+intensity = 5
+report_interval = 15

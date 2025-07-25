@@ -1,0 +1,18 @@
+[package]
+name = "zarza-consensus"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zarza Developer"]
+description = "Zarza consensus library"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = "0.4"
+hex = "0.4"
+thiserror = "1.0"
+zrzhash = { path = "../zrzhash" }
+ring = "0.16"
+config = "0.13"
+log = "0.4" # <--- ¡AÑADE ESTA LÍNEA!
+blake3 = "1.0" # <--- ¡AÑADE ESTA LÍNEA!

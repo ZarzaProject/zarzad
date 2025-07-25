@@ -1,0 +1,8 @@
+[package]
+name = "zrzhash"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sha3 = "0.10"
+blake3 = "1.0"
