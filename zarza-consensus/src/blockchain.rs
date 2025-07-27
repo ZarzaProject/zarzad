@@ -187,7 +187,6 @@ impl Blockchain {
                 self.update_utxos_with_new_outputs(tx);
                 continue;
             }
-
             for input in &tx.inputs {
                 let utxo_key = format!("{}:{}", input.tx_id, input.output_index);
                 if spent_utxos_in_block.contains(&utxo_key) {
@@ -198,13 +197,11 @@ impl Blockchain {
 
             let input_sum = self.verify_inputs(tx)?;
             let output_sum: f64 = tx.outputs.iter().map(|o| o.amount).sum();
-
             if input_sum < output_sum {
                 return Err(BlockchainError::TransactionError(format!("Fondos insuficientes en la transacción {}. Entradas: {}, Salidas: {}", tx.id, input_sum, output_sum)));
             }
 
             total_fees += input_sum - output_sum;
-
             self.consume_inputs_as_utxos(tx);
             self.update_utxos_with_new_outputs(tx);
         }
@@ -221,7 +218,6 @@ impl Blockchain {
         }
         Ok(total_input_amount)
     }
-
     fn consume_inputs_as_utxos(&mut self, tx: &Transaction) {
         for input in &tx.inputs {
             let utxo_key = format!("{}:{}", input.tx_id, input.output_index);
