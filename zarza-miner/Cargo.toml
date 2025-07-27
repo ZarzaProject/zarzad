@@ -1,0 +1,22 @@
+[package]
+name = "zarza-miner"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zarza Developer"]
+description = "Zarza miner"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+config = "0.13"
+log = "0.4"
+pretty_env_logger = "0.4"
+zarza-consensus = { path = "../zarza-consensus" }
+zrzhash = { path = "../zrzhash" } # La fuente del poder de minado
+tokio = { version = "1.0", features = ["full"] }
+clap = { version = "4.0", features = ["derive"] }
+rand = "0.8" # Lo mantenemos para la distribución inicial de nonces.
+chrono = "0.4"
+hex = "0.4"
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+ctrlc = "3.2"

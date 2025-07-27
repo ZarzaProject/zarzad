@@ -1,0 +1,17 @@
+[package]
+name = "zarza-network"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zarza Developer"]
+description = "Zarza network communication"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+config = "0.13"
+log = "0.4"
+zarza-consensus = { path = "../zarza-consensus" }
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["codec"] }
+rand = "0.8"
